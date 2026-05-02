@@ -270,7 +270,7 @@ body {
     <div class="rule-item"><div class="rule-icon" style="background:#3a3a38;color:#888">🪨</div><span>10 초과하면 돌로 굳어 영구히 막힙니다</span></div>
     <div class="rule-item"><div class="rule-icon" style="background:#26215C;color:#CECBF6">💣</div><span>폭탄! 놓으면 상하좌우 모든 블록을 제거</span></div>
   </div>
-  <button class="btn-start" onclick="startGame()">게임 시작</button>
+  <button class="btn-start" onclick="if(!muted){bgmEl.volume=0.4;bgmEl.currentTime=0;bgmEl.play().catch(function(){});}startGame()">게임 시작</button>
   <button class="btn-sm" style="margin-top:10px" onclick="showTitleHighscores()">🏆 하이스코어 보기</button>
 </div>
 
@@ -546,7 +546,8 @@ function showTitleHighscores(){
 }
 
 function startGame(){
-  unlockBGM(); // BGM 잠금 해제 (사용자 클릭 이벤트 내에서 호출)
+  // ★ play()를 클릭 이벤트 직후 가장 먼저 호출해야 브라우저가 허용함
+  if(!muted){bgmEl.volume=0.4;bgmEl.currentTime=0;bgmEl.play().catch(function(){});}
   calcCellSize();
   board=[];
   for(var r=0;r<ROWS;r++){board.push([]);for(var c=0;c<COLS;c++)board[r].push(null);}
@@ -558,7 +559,6 @@ function startGame(){
   spawnPieces(false);
   show('screen-game');
   renderAll();msg('');
-  startBGM();
 }
 
 function spawnPieces(withBomb){
@@ -611,10 +611,10 @@ function showAdModal(){
 }
 function closeAdModal(){clearInterval(adTimerInterval);closeModal();show('screen-gameover');}
 function adContinue(){
+  if(!muted){bgmEl.volume=0.4;bgmEl.play().catch(function(){});}
   clearInterval(adTimerInterval);closeModal();
   gameOver=false;animating=false;
   spawnPieces(true);renderAll();
-  startBGM();
   msg('💣 폭탄이 포함된 블록 세트 지급!');
 }
 
