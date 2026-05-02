@@ -270,7 +270,7 @@ body {
     <div class="rule-item"><div class="rule-icon" style="background:#3a3a38;color:#888">🪨</div><span>10 초과하면 돌로 굳어 영구히 막힙니다</span></div>
     <div class="rule-item"><div class="rule-icon" style="background:#26215C;color:#CECBF6">💣</div><span>폭탄! 놓으면 상하좌우 모든 블록을 제거</span></div>
   </div>
-  <button class="btn-start" onclick="if(!muted){bgmEl.volume=0.4;bgmEl.currentTime=0;bgmEl.play().catch(function(){});}startGame()">게임 시작</button>
+  <button class="btn-start" onclick="startGame()">게임 시작</button>
   <button class="btn-sm" style="margin-top:10px" onclick="showTitleHighscores()">🏆 하이스코어 보기</button>
 </div>
 
@@ -351,7 +351,7 @@ body {
   </div>
 </div>
 
-<audio id="bgm" src="bgm.mp3" loop preload="auto"></audio>
+<audio id="bgm" src="./bgm.mp3" loop preload="auto" playsinline></audio>
 
 <script>
 const COLS=6,ROWS=6;
@@ -371,36 +371,92 @@ function calcCellSize(){
 window.addEventListener('resize',calcCellSize);
 calcCellSize();
 
-/* ── BGM - 브라우저 자동재생 정책 완전 대응 ── */
-var bgmEl=document.getElementById('bgm');
-var bgmUnlocked=false;
+/* ── BGM - GitHub Pages + 모바일 브라우저 대응 ── */
+var bgmEl = document.getElementById('bgm');
+var bgmStarted = false;
+var bgmGestureArmed = false;
 
-function unlockBGM(){
-  if(bgmUnlocked)return;
-  bgmUnlocked=true;
-  // 사용자 인터랙션 후 AudioContext 잠금 해제
-  if(audioCtx&&audioCtx.state==='suspended')audioCtx.resume();
+function prepareBGM(){
+  if(!bgmEl)return;
+  bgmEl.src = './bgm.mp3';
+  bgmEl.loop = true;
+  bgmEl.preload = 'auto';
+  bgmEl.volume = 0.45;
+  bgmEl.muted = false;
+  try{ bgmEl.load(); }catch(e){}
 }
 
-function startBGM(){
-  if(muted)return;
-  unlockBGM();
-  bgmEl.volume=0.4;
-  // play() 실패 시 재시도 로직
-  var p=bgmEl.play();
-  if(p!==undefined){
-    p.catch(function(e){
-      // 자동재생 차단 시 사용자 다음 클릭 때 재시도
-      document.addEventListener('click',function retryBgm(){
-        if(!muted)bgmEl.play().catch(function(){});
-        document.removeEventListener('click',retryBgm);
-      },{once:true});
+function unlockAudioContext(){
+  try{
+    var ctx = getCtx();
+    if(ctx && ctx.state === 'suspended')ctx.resume();
+  }catch(e){}
+}
+
+function armBGMGesture(){
+  if(bgmGestureArmed)return;
+  bgmGestureArmed = true;
+  ['pointerdown','touchstart','mousedown','keydown','click'].forEach(function(ev){
+    document.addEventListener(ev, playBGMFromGesture, {once:true, passive:true});
+  });
+}
+
+function playBGMFromGesture(){
+  bgmGestureArmed = false;
+  startBGM(false);
+}
+
+function startBGM(reset){
+  if(muted || !bgmEl)return;
+  unlockAudioContext();
+  bgmEl.volume = 0.45;
+  bgmEl.muted = false;
+  if(reset){
+    try{ bgmEl.currentTime = 0; }catch(e){}
+  }
+  var p = bgmEl.play();
+  if(p !== undefined){
+    p.then(function(){
+      bgmStarted = true;
+    }).catch(function(){
+      /*
+        Chrome/Safari/iPhone은 사용자 조작 없는 소리 자동재생을 막을 수 있음.
+        그래서 접속 직후 자동재생을 시도하고, 막히면 첫 클릭/터치 때 바로 재생한다.
+      */
+      armBGMGesture();
     });
+  }else{
+    bgmStarted = true;
   }
 }
-function stopBGM(){bgmEl.pause();bgmEl.currentTime=0;}
-function pauseBGM(){bgmEl.pause();}
-function resumeBGM(){if(!muted)bgmEl.play().catch(function(){});}
+
+function stopBGM(){
+  if(!bgmEl)return;
+  bgmEl.pause();
+  try{ bgmEl.currentTime = 0; }catch(e){}
+  bgmStarted = false;
+}
+
+function pauseBGM(){
+  if(bgmEl)bgmEl.pause();
+}
+
+function resumeBGM(){
+  startBGM(false);
+}
+
+// 페이지에 들어오자마자 재생을 먼저 시도하고, 실패하면 첫 터치/클릭에서 즉시 재생
+document.addEventListener('DOMContentLoaded', function(){
+  prepareBGM();
+  startBGM(false);
+  armBGMGesture();
+}, {once:true});
+
+document.addEventListener('visibilitychange', function(){
+  if(!document.hidden && !muted && bgmStarted){
+    startBGM(false);
+  }
+});
 
 /* ── 효과음 ── */
 var audioCtx=null;
@@ -546,8 +602,8 @@ function showTitleHighscores(){
 }
 
 function startGame(){
-  // ★ play()를 클릭 이벤트 직후 가장 먼저 호출해야 브라우저가 허용함
-  if(!muted){bgmEl.volume=0.4;bgmEl.currentTime=0;bgmEl.play().catch(function(){});}
+  // 게임 시작 버튼을 누르는 순간 BGM을 확실히 시작
+  startBGM(true);
   calcCellSize();
   board=[];
   for(var r=0;r<ROWS;r++){board.push([]);for(var c=0;c<COLS;c++)board[r].push(null);}
@@ -611,7 +667,7 @@ function showAdModal(){
 }
 function closeAdModal(){clearInterval(adTimerInterval);closeModal();show('screen-gameover');}
 function adContinue(){
-  if(!muted){bgmEl.volume=0.4;bgmEl.play().catch(function(){});}
+  startBGM(false);
   clearInterval(adTimerInterval);closeModal();
   gameOver=false;animating=false;
   spawnPieces(true);renderAll();
