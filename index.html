@@ -116,6 +116,7 @@ body {
 .cell.stone { background: #3a3a38; color: #888780; cursor: not-allowed; border-color: #2a2a28; box-shadow: none; }
 .cell.stone:active { transform: none; }
 .cell.bomb-cell { background: #26215C; color: #CECBF6; border-color: #534AB7; box-shadow: none; }
+.cell.nuke-cell { background: #4b1020; color: #ffe3a3; border-color: #D85A30; box-shadow: none; }
 .cell.num { box-shadow: none; border: none; }
 
 .cell.pulse-anim { animation: pulseAnim 0.28s ease; }
@@ -142,6 +143,8 @@ body {
 .piece-slot.selected { border-color: var(--accent); background: #fff5f2; }
 .piece-slot.bomb-slot { border-color: #c0bce8; background: #f5f4fc; }
 .piece-slot.bomb-slot.selected { border-color: var(--purple2); background: #eceafb; }
+.piece-slot.nuke-slot { border-color: #D85A30; background: #fff5f2; }
+.piece-slot.nuke-slot.selected { border-color: #993C1D; background: #ffe8df; }
 .piece-val { font-size: clamp(18px,5vw,22px); font-weight: 700; }
 .piece-sub { font-size: clamp(9px,2.5vw,10px); color: var(--text3); }
 .piece-badge { position: absolute; top: -6px; right: -6px; background: var(--purple); color: #EEEDFE; font-size: 9px; padding: 2px 5px; border-radius: 8px; font-weight: 700; }
@@ -280,7 +283,7 @@ body {
     <button id="settings-btn" onclick="toggleSettings()">⚙</button>
     <div id="header">
       <div class="stat"><span class="stat-label">점수</span><span class="stat-val" id="score">0</span></div>
-      <div class="stat"><span class="stat-label">연쇄</span><span class="stat-val" id="chain">x1</span></div>
+      <div class="stat"><span class="stat-label">콤보</span><span class="stat-val" id="chain">x1</span></div>
       <div class="stat"><span class="stat-label">베스트</span><span class="stat-val" id="best">0</span></div>
     </div>
   </div>
@@ -315,7 +318,7 @@ body {
   </div>
 
   <div class="go-btns">
-    <button class="btn-ad" onclick="showAdModal()"><span style="font-size:18px">💣</span> 광고 보고 계속하기</button>
+    <button class="btn-ad" onclick="showAdModal()"><span style="font-size:18px">☢️</span> 광고 보고 핵폭탄 받기</button>
     <button class="btn-start" onclick="startGame()" style="padding:12px 36px;font-size:14px">다시 하기</button>
     <button class="btn-sm" onclick="goTitle()">타이틀로</button>
   </div>
@@ -336,14 +339,14 @@ body {
   <div id="ad-box" style="display:none">
     <div class="ad-header">
       <div class="modal-title">광고 보고 계속하기</div>
-      <div class="modal-desc" style="font-size:12px">광고 시청 후 게임을 이어갈 수 있어요.<br>다음 블록 세트에 폭탄이 포함됩니다!</div>
+      <div class="modal-desc" style="font-size:12px">광고 시청 후 게임을 이어갈 수 있어요.<br>다음 블록 세트에 핵폭탄이 포함됩니다!</div>
     </div>
     <div class="ad-placeholder">
       <div class="ad-placeholder-label">광고 영역 (준비 중)</div>
       <div class="ad-timer" id="ad-timer">5</div>
       <div class="ad-placeholder-label">초 후 계속하기 버튼 활성화</div>
     </div>
-    <div class="ad-reward"><span style="font-size:18px">💣</span><span>보상: 다음 블록 세트에 폭탄 1개 지급!</span></div>
+    <div class="ad-reward"><span style="font-size:18px">☢️</span><span>보상: 핵폭탄 1개 + 낮은 숫자 블록 2개 지급!</span></div>
     <div class="ad-footer">
       <button class="modal-btn" onclick="closeAdModal()">닫기</button>
       <button class="modal-btn purple" id="ad-continue-btn" style="display:none" onclick="adContinue()">계속하기</button>
@@ -544,6 +547,18 @@ var NORMAL_TOTAL=93;
 var BOMB_WEIGHT=1.6;
 // 폭탄이 나온 뒤에는 다음 3세트 동안 랜덤 폭탄 금지
 var bombSetCooldown=0;
+// 콤보: 10 폭발/폭탄/핵폭탄이 연속으로 터질수록 점수 배율이 1,2,4,8...로 증가
+var comboPower=0;
+
+function currentComboMultiplier(){return Math.pow(2,comboPower);}
+function updateComboDisplay(mult){document.getElementById('chain').textContent='x'+(mult||1);}
+function registerComboHit(){
+  var mult=currentComboMultiplier();
+  comboPower++;
+  updateComboDisplay(mult);
+  return mult;
+}
+function resetCombo(){comboPower=0;updateComboDisplay(1);}
 
 function randNormalPiece(){
   var r=Math.random()*NORMAL_TOTAL;
@@ -553,6 +568,18 @@ function randNormalPiece(){
     if(r<acc)return PIECE_TABLE[i][0];
   }
   return 3;
+}
+function randLowPiece(){
+  // 광고 보상 후에는 재도전 기회 느낌이 나도록 낮은 숫자만 지급
+  var lows=[1,1,2,2,2,3,3];
+  return lows[Math.floor(Math.random()*lows.length)];
+}
+function shuffleArray(arr){
+  for(var i=arr.length-1;i>0;i--){
+    var j=Math.floor(Math.random()*(i+1));
+    var tmp=arr[i];arr[i]=arr[j];arr[j]=tmp;
+  }
+  return arr;
 }
 
 function randPiece(allowBomb){
@@ -626,10 +653,10 @@ function startGame(){
   calcCellSize();
   board=[];
   for(var r=0;r<ROWS;r++){board.push([]);for(var c=0;c<COLS;c++)board[r].push(null);}
-  score=0;selected=null;animating=false;gameOver=false;bombSetCooldown=0;
+  score=0;selected=null;animating=false;gameOver=false;bombSetCooldown=0;comboPower=0;
   try{best=parseInt(localStorage.getItem('pw_best')||'0')||0;}catch(e){best=0;}
   document.getElementById('best').textContent=best;
-  document.getElementById('chain').textContent='x1';
+  updateComboDisplay(1);
   closeModal();closeSettings();
   spawnPieces(false);
   show('screen-game');
@@ -642,7 +669,7 @@ function spawnPieces(withBomb){
   var allowRandomBomb=!withBomb&&bombSetCooldown<=0;
   pieces=[randPiece(allowRandomBomb),randPiece(allowRandomBomb),randPiece(allowRandomBomb)];
 
-  // 광고 보상 등 강제 폭탄은 기존 기능 유지
+  // 혹시 기존 호출에서 강제 폭탄을 쓰더라도 기본 폭탄 1개 지급 유지
   if(withBomb)pieces[Math.floor(Math.random()*3)]='bomb';
 
   var hasBomb=false;
@@ -654,6 +681,11 @@ function spawnPieces(withBomb){
     bombSetCooldown--;
   }
 
+  selected=null;
+}
+function spawnNukeRewardPieces(){
+  // 광고 보고 이어하기 보상: 핵폭탄 1개 + 낮은 숫자 블록 2개
+  pieces=shuffleArray(['nuke',randLowPiece(),randLowPiece()]);
   selected=null;
 }
 
@@ -704,8 +736,8 @@ function adContinue(){
   startBGM(false);
   clearInterval(adTimerInterval);closeModal();
   gameOver=false;animating=false;
-  spawnPieces(true);renderAll();
-  msg('💣 폭탄이 포함된 블록 세트 지급!');
+  spawnNukeRewardPieces();renderAll();
+  msg('☢️ 핵폭탄과 낮은 숫자 블록 세트 지급! 핵폭탄은 블록/돌 위에 설치할 수 있어요.');
 }
 
 function renderAll(){
@@ -727,6 +759,7 @@ function renderBoard(){
         if(v===null){div.className='cell empty';}
         else if(v==='stone'){div.className='cell stone';div.textContent='🪨';}
         else if(v==='bomb'){div.className='cell bomb-cell';div.textContent='💣';}
+        else if(v==='nuke'){div.className='cell nuke-cell';div.textContent='☢️';}
         else{var col=cellColor(v);div.className='cell num';div.style.background=col.bg;div.style.color=col.text;div.textContent=v;}
         div.addEventListener('click',function(){if(!animating&&!gameOver){closeSettings();placeAt(rr,cc);}});
         b.appendChild(div);
@@ -740,10 +773,14 @@ function renderPieces(){
   for(var i=0;i<pieces.length;i++){
     if(pieces[i]===null)continue;
     (function(idx){
-      var v=pieces[idx],isBomb=v==='bomb';
+      var v=pieces[idx],isBomb=v==='bomb',isNuke=v==='nuke';
       var slot=document.createElement('div');
-      slot.className='piece-slot'+(isBomb?' bomb-slot':'')+(selected===idx?' selected':'');
-      if(isBomb){
+      slot.className='piece-slot'+(isBomb?' bomb-slot':'')+(isNuke?' nuke-slot':'')+(selected===idx?' selected':'');
+      if(isNuke){
+        var badge=document.createElement('div');badge.className='piece-badge';badge.textContent='REVIVE';slot.appendChild(badge);
+        var val=document.createElement('div');val.className='piece-val';val.textContent='☢️';slot.appendChild(val);
+        var sub=document.createElement('div');sub.className='piece-sub';sub.textContent='가로 2칸씩 제거';slot.appendChild(sub);
+      }else if(isBomb){
         var badge=document.createElement('div');badge.className='piece-badge';badge.textContent='ITEM';slot.appendChild(badge);
         var val=document.createElement('div');val.className='piece-val';val.textContent='💣';slot.appendChild(val);
         var sub=document.createElement('div');sub.className='piece-sub';sub.textContent='주변 전체 제거';slot.appendChild(sub);
@@ -760,10 +797,16 @@ function renderPieces(){
 
 function placeAt(r,c){
   if(selected===null||pieces[selected]===null){msg('먼저 블록을 선택하세요.');return;}
-  if(board[r][c]!==null){msg(board[r][c]==='stone'?'🪨 돌 칸에는 놓을 수 없어요!':'이미 블록이 있어요!');return;}
-  var val=pieces[selected];pieces[selected]=null;selected=null;animating=true;
+  var val=pieces[selected];
+  if(val==='nuke'){
+    if(board[r][c]===null){msg('☢️ 핵폭탄은 블록이나 돌 위에 설치할 수 있어요!');return;}
+  }else if(board[r][c]!==null){
+    msg(board[r][c]==='stone'?'🪨 돌 칸에는 놓을 수 없어요!':'이미 블록이 있어요!');return;
+  }
+  pieces[selected]=null;selected=null;animating=true;
   playPlace();
   if(val==='bomb'){placeBomb(r,c,afterPlace);}
+  else if(val==='nuke'){placeNuke(r,c,afterPlace);}
   else{board[r][c]=val;spreadFromOrigin(r,c,val,1,afterPlace);}
 }
 
@@ -786,14 +829,42 @@ function placeBomb(r,c,done){
       if(nr<0||nr>=ROWS||nc<0||nc>=COLS)continue;
       if(board[nr][nc]!==null){board[nr][nc]=null;removed.push([nr,nc]);}
     }
-    var pts=(removed.length+1)*150;score+=pts;
+    var mult=registerComboHit();
+    var basePts=(removed.length+1)*150;
+    var pts=basePts*mult;score+=pts;
     document.getElementById('score').textContent=score;
-    msg('💣 폭탄 폭발! '+removed.length+'개 블록 제거 +'+pts+'점');
+    msg('💣 폭탄 폭발! 콤보 x'+mult+' · '+removed.length+'개 블록 제거 +'+pts+'점');
     playBomb();renderBoard();
     var cells2=document.querySelectorAll('.cell');
     var bel2=cells2[r*COLS+c];if(bel2)bel2.classList.add('bomb-explode-anim');
     for(var ri=0;ri<removed.length;ri++){var el=cells2[removed[ri][0]*COLS+removed[ri][1]];if(el)el.classList.add('bomb-explode-anim');}
     setTimeout(done,520);
+  },300);
+}
+
+function placeNuke(r,c,done){
+  var blast=[];
+  var original=board[r][c];
+  board[r][c]='nuke';renderBoard();
+  var cells=document.querySelectorAll('.cell');
+  var nel=cells[r*COLS+c];if(nel)nel.classList.add('pulse-anim');
+  setTimeout(function(){
+    var removed=[];
+    for(var dc=-2;dc<=2;dc++){
+      var nc=c+dc;
+      if(nc<0||nc>=COLS)continue;
+      if(dc===0)board[r][nc]=original;
+      if(board[r][nc]!==null){removed.push([r,nc]);board[r][nc]=null;}
+    }
+    var mult=registerComboHit();
+    var basePts=removed.length*200;
+    var pts=basePts*mult;score+=pts;
+    document.getElementById('score').textContent=score;
+    msg('☢️ 핵폭탄 폭발! 콤보 x'+mult+' · 가로 '+removed.length+'칸 제거 +'+pts+'점');
+    playBomb();renderBoard();
+    var cells2=document.querySelectorAll('.cell');
+    for(var ri=0;ri<removed.length;ri++){var el=cells2[removed[ri][0]*COLS+removed[ri][1]];if(el)el.classList.add('bomb-explode-anim');}
+    setTimeout(done,560);
   },300);
 }
 
@@ -814,17 +885,17 @@ function spreadFromOrigin(or_,oc_,val,chainMult,done){
       var cells=document.querySelectorAll('.cell');
       for(var si=0;si<toStone.length;si++){var el=cells[toStone[si][0]*COLS+toStone[si][1]];if(el)el.classList.add('stone-anim');}
     }
-    if(toExplode.length===0){setTimeout(done,toStone.length>0?400:0);return;}
+    if(toExplode.length===0){resetCombo();setTimeout(done,toStone.length>0?400:0);return;}
     doExplode(toExplode,chainMult,done);
   });
 }
 
 function doExplode(explodeList,chainMult,done){
   var dirs=[[-1,0],[1,0],[0,-1],[0,1]];
-  var pts=explodeList.length*100*chainMult;score+=pts;
+  var mult=registerComboHit();
+  var pts=explodeList.length*100*mult;score+=pts;
   document.getElementById('score').textContent=score;
-  document.getElementById('chain').textContent='x'+chainMult;
-  msg('💥 '+explodeList.length+'개 폭발! +'+pts+'점'+(chainMult>1?' ('+chainMult+'연쇄!)':''));
+  msg('💥 '+explodeList.length+'개 폭발! 콤보 x'+mult+' · +'+pts+'점');
   playExplode(explodeList.length);renderBoard();
   var cells=document.querySelectorAll('.cell');
   for(var ei=0;ei<explodeList.length;ei++){var el=cells[explodeList[ei][0]*COLS+explodeList[ei][1]];if(el)el.classList.add('explode-anim');}
@@ -921,8 +992,11 @@ function renderHighscores(list,newScore){
 function checkGameOver(){
   var emptyCount=0;
   for(var r=0;r<ROWS;r++)for(var c=0;c<COLS;c++)if(board[r][c]===null)emptyCount++;
-  var has=false;for(var i=0;i<pieces.length;i++)if(pieces[i]!==null){has=true;break;}
-  if(has&&emptyCount===0){
+  var has=false,hasNuke=false;
+  for(var i=0;i<pieces.length;i++){
+    if(pieces[i]!==null){has=true;if(pieces[i]==='nuke')hasNuke=true;}
+  }
+  if(has&&emptyCount===0&&!hasNuke){
     gameOver=true;stopBGM();
     // 하이스코어 저장
     var list=saveHighscore(score);
