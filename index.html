@@ -300,7 +300,7 @@ body {
     <div class="rule-item"><div class="rule-icon" style="background:#26215C;color:#CECBF6">💣</div><span>폭탄! 놓으면 상하좌우 모든 블록을 제거</span></div>
   </div>
   <button class="btn-start" onclick="startGame()">게임 시작</button>
-  <button class="btn-sm" style="margin-top:10px" onclick="showTitleHighscores()">🏆 하이스코어 보기</button>
+  <button class="btn-sm" style="margin-top:10px" onclick="showTitleOnlineRanking()">🌐 전체랭킹 보기</button>
 </div>
 
 <!-- GAME -->
@@ -654,36 +654,79 @@ function buildTitlePreview(){
   });
 }
 
-function showTitleHighscores(){
-  var list=loadHighscores();
-  // 모달 재활용
-  document.getElementById('modal-box').style.display='flex';
-  document.getElementById('ad-box').style.display='none';
-  document.getElementById('modal-title').textContent='🏆 하이스코어';
-  // 목록 HTML 직접 생성
+function escapeHtml(text){
+  return String(text==null?'':text).replace(/[&<>"']/g,function(ch){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+  });
+}
+
+async function fetchOnlineRankingList(limit){
+  limit=limit||20;
+  if(!hasFirebaseConfig())throw new Error('Realtime Database URL이 필요해요.');
+  var res=await fetch(firebaseRankUrl('orderBy=%22score%22&limitToLast='+limit),{method:'GET',cache:'no-store'});
+  if(!res.ok)throw new Error('HTTP '+res.status);
+  var data=await res.json();
+  var list=[];
+  if(data){
+    Object.keys(data).forEach(function(id){
+      var d=data[id]||{};
+      list.push({id:id,nickname:d.nickname||'익명',score:Number(d.score)||0,date:d.date||'',createdAt:d.createdAt||0});
+    });
+  }
+  list.sort(function(a,b){return (b.score-a.score)||((b.createdAt||0)-(a.createdAt||0));});
+  return list;
+}
+
+function titleRankingHtml(list,statusText){
   var rankEmojis=['🥇','🥈','🥉'];
   var html='';
+  if(statusText){html+='<div style="font-size:12px;color:#7a7570;margin-bottom:8px">'+escapeHtml(statusText)+'</div>';}
   if(!list||list.length===0){
-    html='<div style="text-align:center;padding:16px 0;font-size:13px;color:#b0ada8">아직 기록이 없어요</div>';
+    html+='<div style="text-align:center;padding:16px 0;font-size:13px;color:#b0ada8">아직 온라인 기록이 없어요</div>';
   }else{
-    html='<div style="display:flex;flex-direction:column;gap:2px;margin-top:4px">';
-    list.slice(0,10).forEach(function(e,i){
+    html+='<div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;max-height:320px;overflow:auto">';
+    list.slice(0,20).forEach(function(e,i){
       var rank=i<3?rankEmojis[i]:(i+1)+'.';
       var color=i===0?'#c8960c':i===1?'#888':i===2?'#a0633a':'#b0ada8';
       html+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f8f6f2">'
-        +'<span style="width:24px;text-align:center;font-size:13px;font-weight:700;color:'+color+'">'+rank+'</span>'
-        +'<span style="flex:1;font-size:14px;font-weight:700;color:#2a2520">'+e.score.toLocaleString()+'점</span>'
-        +'<span style="font-size:11px;color:#b0ada8">'+e.date+'</span>'
+        +'<span style="width:28px;text-align:center;font-size:13px;font-weight:700;color:'+color+'">'+rank+'</span>'
+        +'<span style="flex:1;min-width:0;font-size:14px;color:#2a2520;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(e.nickname||'익명')+'</span>'
+        +'<span style="font-size:14px;font-weight:700;color:#D85A30">'+(Number(e.score)||0).toLocaleString()+'점</span>'
         +'</div>';
     });
     html+='</div>';
   }
+  html+='<button class="modal-btn" style="margin-top:12px;width:100%" onclick="refreshTitleOnlineRanking()">새로고침</button>';
+  return html;
+}
+
+function openTitleRankingModal(html){
+  document.getElementById('modal-box').style.display='flex';
+  document.getElementById('ad-box').style.display='none';
+  document.getElementById('modal-title').textContent='🌐 전체랭킹';
   document.getElementById('modal-desc').innerHTML=html;
   document.getElementById('modal-confirm-btn').textContent='닫기';
   modalCallback=null;
-  // 확인 버튼 = 닫기만
-  document.getElementById('modal-confirm-btn').onclick=function(){closeModal();document.getElementById('modal-confirm-btn').onclick=null;document.getElementById('modal-confirm-btn').addEventListener('click',function(){var cb=modalCallback;closeModal();if(cb)cb();});};
+  document.getElementById('modal-confirm-btn').onclick=function(){closeModal();};
   document.getElementById('modal-overlay').classList.add('open');
+}
+
+async function refreshTitleOnlineRanking(){
+  openTitleRankingModal('<div style="text-align:center;padding:18px 0;font-size:13px;color:#7a7570">온라인 랭킹 불러오는 중...</div>');
+  try{
+    var list=await fetchOnlineRankingList(20);
+    openTitleRankingModal(titleRankingHtml(list,'온라인 전체랭킹 TOP 20'));
+  }catch(e){
+    openTitleRankingModal('<div style="font-size:13px;color:#993C1D;line-height:1.6">전체랭킹을 불러오지 못했어요.<br>'+escapeHtml(e.message||e)+'</div><button class="modal-btn" style="margin-top:12px;width:100%" onclick="refreshTitleOnlineRanking()">다시 불러오기</button>');
+  }
+}
+
+function showTitleOnlineRanking(){
+  refreshTitleOnlineRanking();
+}
+
+function showTitleHighscores(){
+  showTitleOnlineRanking();
 }
 
 function startGame(){
