@@ -229,7 +229,7 @@ body {
 .btn-sm:hover { background: var(--bg2); }
 
 /* ── 하이스코어 테이블 ── */
-#highscore-box {
+#highscore-box, #online-ranking-box {
   width: min(320px, 88vw);
   background: #ffffff;
   border: 1.5px solid #e8e4dc;
@@ -257,6 +257,32 @@ body {
 .hs-date { font-size: 11px; color: var(--text3); }
 .hs-new { font-size: 10px; font-weight: 700; color: #fff; background: var(--accent); padding: 2px 7px; border-radius: 20px; }
 .hs-empty { text-align: center; padding: 20px; font-size: 13px; color: var(--text3); }
+
+.rank-submit {
+  display: flex; gap: 6px; padding: 10px 12px 6px;
+  border-bottom: 1px solid #f8f6f2;
+}
+#rank-nickname {
+  flex: 1; min-width: 0; padding: 9px 10px;
+  border: 1.5px solid var(--border); border-radius: 9px;
+  font-size: 13px; color: var(--text); outline: none;
+}
+#rank-nickname:focus { border-color: var(--accent); }
+.rank-submit-btn {
+  padding: 9px 11px; border-radius: 9px; border: 1.5px solid var(--accent);
+  background: var(--accent); color: #fff; font-size: 12px; font-weight: 700;
+  cursor: pointer; white-space: nowrap; touch-action: manipulation;
+}
+.rank-submit-btn:disabled { opacity: 0.55; cursor: default; }
+.rank-status { padding: 6px 14px 2px; min-height: 22px; font-size: 11px; color: var(--text3); }
+.online-rank-list { padding: 4px 0 8px; }
+.online-rank-row {
+  display: flex; align-items: center; gap: 8px; padding: 7px 14px;
+  border-top: 1px solid #f8f6f2;
+}
+.online-rank-name { flex: 1; min-width: 0; font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.online-rank-score { font-size: 13px; font-weight: 700; color: var(--accent); }
+.online-rank-me { font-size: 10px; font-weight: 700; color: #fff; background: var(--purple); padding: 2px 6px; border-radius: 999px; }
 </style>
 </head>
 <body>
@@ -315,6 +341,19 @@ body {
       <button class="hs-clear" onclick="clearHighscores()">초기화</button>
     </div>
     <div class="hs-list" id="hs-list"></div>
+  </div>
+
+  <div id="online-ranking-box">
+    <div class="hs-header">
+      <span class="hs-title">🌐 온라인 랭킹</span>
+      <button class="hs-clear" onclick="loadOnlineRankings()">새로고침</button>
+    </div>
+    <div class="rank-submit">
+      <input id="rank-nickname" type="text" maxlength="12" placeholder="닉네임 입력" autocomplete="nickname">
+      <button class="rank-submit-btn" id="rank-submit-btn" onclick="submitOnlineRanking()">랭킹 등록</button>
+    </div>
+    <div class="rank-status" id="rank-status">Firebase 설정 후 온라인 랭킹을 사용할 수 있어요.</div>
+    <div class="online-rank-list" id="online-rank-list"></div>
   </div>
 
   <div class="go-btns">
@@ -843,24 +882,28 @@ function placeBomb(r,c,done){
 }
 
 function placeNuke(r,c,done){
-  var blast=[];
   var original=board[r][c];
   board[r][c]='nuke';renderBoard();
   var cells=document.querySelectorAll('.cell');
   var nel=cells[r*COLS+c];if(nel)nel.classList.add('pulse-anim');
   setTimeout(function(){
-    var removed=[];
-    for(var dc=-2;dc<=2;dc++){
-      var nc=c+dc;
-      if(nc<0||nc>=COLS)continue;
-      if(dc===0)board[r][nc]=original;
-      if(board[r][nc]!==null){removed.push([r,nc]);board[r][nc]=null;}
+    var removed=[],seen={};
+    // 핵폭탄: 설치한 칸 기준 가로 2칸 + 세로 2칸까지 십자 형태로 제거
+    function addBlastCell(rr,cc){
+      if(rr<0||rr>=ROWS||cc<0||cc>=COLS)return;
+      var key=rr+','+cc;
+      if(seen[key])return;
+      seen[key]=true;
+      if(rr===r&&cc===c)board[rr][cc]=original;
+      if(board[rr][cc]!==null){removed.push([rr,cc]);board[rr][cc]=null;}
     }
+    for(var dc=-2;dc<=2;dc++)addBlastCell(r,c+dc);
+    for(var dr=-2;dr<=2;dr++)addBlastCell(r+dr,c);
     var mult=registerComboHit();
     var basePts=removed.length*200;
     var pts=basePts*mult;score+=pts;
     document.getElementById('score').textContent=score;
-    msg('☢️ 핵폭탄 폭발! 콤보 x'+mult+' · 가로 '+removed.length+'칸 제거 +'+pts+'점');
+    msg('☢️ 핵폭탄 폭발! 콤보 x'+mult+' · 가로/세로 '+removed.length+'칸 제거 +'+pts+'점');
     playBomb();renderBoard();
     var cells2=document.querySelectorAll('.cell');
     for(var ri=0;ri<removed.length;ri++){var el=cells2[removed[ri][0]*COLS+removed[ri][1]];if(el)el.classList.add('bomb-explode-anim');}
@@ -941,6 +984,143 @@ function animatePulseStep(origin,affected,cb){
 var HS_KEY='pw_highscores';
 var lastScoreIsNew=false;
 
+/* ── 온라인 랭킹(Firebase Realtime Database REST API) ──
+   Firebase SDK 설정값 없이, Realtime Database URL만으로 랭킹을 읽고 씁니다.
+   데이터베이스 규칙 탭에는 아래 답변의 RTDB Rules를 붙여 넣어야 합니다.
+*/
+var FIREBASE_DB_URL='https://pulsewave-4abd7-default-rtdb.asia-southeast1.firebasedatabase.app';
+var RANK_PATH='rankings';
+var currentGameOverScore=0;
+var rankingSubmittedThisGame=false;
+var myLastRankDocId=null;
+
+function hasFirebaseConfig(){
+  return FIREBASE_DB_URL&&FIREBASE_DB_URL.indexOf('https://')===0&&FIREBASE_DB_URL.indexOf('YOUR_')===-1;
+}
+function firebaseRankUrl(query){
+  var base=FIREBASE_DB_URL.replace(/\/$/,'')+'/'+RANK_PATH+'.json';
+  return query?base+'?'+query:base;
+}
+function setRankStatus(text){var el=document.getElementById('rank-status');if(el)el.textContent=text||'';}
+function setRankSubmitState(text,disabled){
+  var btn=document.getElementById('rank-submit-btn');
+  if(!btn)return;
+  btn.textContent=text;
+  btn.disabled=!!disabled;
+}
+function sanitizeNickname(name){
+  name=(name||'').trim().replace(/[<>]/g,'');
+  if(name.length>12)name=name.slice(0,12);
+  return name;
+}
+function prepareOnlineRanking(finalScore){
+  currentGameOverScore=finalScore||0;
+  rankingSubmittedThisGame=false;
+  myLastRankDocId=null;
+  var input=document.getElementById('rank-nickname');
+  if(input){
+    try{input.value=localStorage.getItem('pw_rank_nickname')||'';}catch(e){}
+    input.disabled=false;
+  }
+  setRankSubmitState('랭킹 등록',false);
+  if(hasFirebaseConfig())setRankStatus('닉네임을 입력하고 온라인 랭킹에 등록해보세요.');
+  else setRankStatus('Realtime Database URL이 필요해요.');
+  renderOnlineRankings([], false);
+  loadOnlineRankings();
+}
+function renderOnlineRankings(list,loading){
+  var el=document.getElementById('online-rank-list');
+  if(!el)return;
+  el.innerHTML='';
+  if(loading){el.innerHTML='<div class="hs-empty">온라인 랭킹 불러오는 중...</div>';return;}
+  if(!list||list.length===0){el.innerHTML='<div class="hs-empty">아직 온라인 기록이 없어요</div>';return;}
+  var rankClasses=['gold','silver','bronze'];
+  var rankEmojis=['🥇','🥈','🥉'];
+  list.forEach(function(entry,i){
+    var row=document.createElement('div');row.className='online-rank-row';
+    var rankEl=document.createElement('div');rankEl.className='hs-rank'+(i<3?' '+rankClasses[i]:'');rankEl.textContent=i<3?rankEmojis[i]:(i+1)+'';
+    var nameEl=document.createElement('div');nameEl.className='online-rank-name';nameEl.textContent=entry.nickname||'익명';
+    var scoreEl=document.createElement('div');scoreEl.className='online-rank-score';scoreEl.textContent=(entry.score||0).toLocaleString()+'점';
+    row.appendChild(rankEl);row.appendChild(nameEl);
+    if(entry.id&&entry.id===myLastRankDocId){var me=document.createElement('span');me.className='online-rank-me';me.textContent='ME';row.appendChild(me);}
+    row.appendChild(scoreEl);
+    el.appendChild(row);
+  });
+}
+async function loadOnlineRankings(){
+  var el=document.getElementById('online-rank-list');
+  if(!el)return;
+  if(!hasFirebaseConfig()){
+    setRankStatus('Realtime Database URL이 아직 비어 있어요.');
+    renderOnlineRankings([], false);
+    return;
+  }
+  renderOnlineRankings([], true);
+  try{
+    // Realtime Database REST는 .json을 붙이고 쿼리 파라미터로 orderBy/limitToLast를 사용합니다.
+    // score 오름차순으로 마지막 20개를 가져온 뒤, 화면에서는 점수 높은 순으로 다시 정렬합니다.
+    var res=await fetch(firebaseRankUrl('orderBy=%22score%22&limitToLast=20'),{method:'GET',cache:'no-store'});
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    var data=await res.json();
+    var list=[];
+    if(data){
+      Object.keys(data).forEach(function(id){
+        var d=data[id]||{};
+        list.push({id:id,nickname:d.nickname||'익명',score:Number(d.score)||0,date:d.date||'',createdAt:d.createdAt||0});
+      });
+    }
+    list.sort(function(a,b){return (b.score-a.score)||((b.createdAt||0)-(a.createdAt||0));});
+    renderOnlineRankings(list,false);
+    setRankStatus('온라인 랭킹을 새로고침했어요.');
+  }catch(e){
+    console.error(e);
+    setRankStatus('온라인 랭킹을 불러오지 못했어요: '+(e.message||e));
+    renderOnlineRankings([],false);
+  }
+}
+async function submitOnlineRanking(){
+  if(rankingSubmittedThisGame){setRankSubmitState('등록 완료',true);return;}
+  var input=document.getElementById('rank-nickname');
+  var nickname=sanitizeNickname(input?input.value:'');
+  if(!nickname){setRankStatus('닉네임을 먼저 입력해주세요.');if(input)input.focus();return;}
+  if(!hasFirebaseConfig()){
+    setRankStatus('Realtime Database URL이 필요해요.');
+    return;
+  }
+  setRankSubmitState('등록 중...',true);
+  setRankStatus('온라인 랭킹에 등록하는 중...');
+  try{
+    var now=new Date();
+    var dateStr=(now.getMonth()+1)+'/'+now.getDate()+' '+(now.getHours()<10?'0':'')+now.getHours()+':'+(now.getMinutes()<10?'0':'')+now.getMinutes();
+    var payload={
+      nickname:nickname,
+      score:Number(currentGameOverScore)||0,
+      date:dateStr,
+      createdAt:Date.now()
+    };
+    var res=await fetch(firebaseRankUrl(),{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    var result=await res.json();
+    myLastRankDocId=result&&result.name?result.name:null;
+    rankingSubmittedThisGame=true;
+    try{localStorage.setItem('pw_rank_nickname',nickname);}catch(e){}
+    if(input)input.disabled=true;
+    setRankSubmitState('등록 완료',true);
+    setRankStatus('등록 완료! 온라인 랭킹을 새로고침했어요.');
+    await loadOnlineRankings();
+    setRankSubmitState('등록 완료',true);
+  }catch(e){
+    console.error(e);
+    rankingSubmittedThisGame=false;
+    setRankSubmitState('랭킹 등록',false);
+    setRankStatus('등록 실패: '+(e.message||e));
+  }
+}
+
 function loadHighscores(){
   try{return JSON.parse(localStorage.getItem(HS_KEY)||'[]');}catch(e){return[];}
 }
@@ -1006,9 +1186,11 @@ function checkGameOver(){
     best=Math.max(score,prevBest);
     document.getElementById('go-score-val').textContent=score.toLocaleString();
     document.getElementById('go-best-msg').textContent=score>=prevBest&&score>0?'🎉 신기록 달성!':'최고 기록: '+prevBest.toLocaleString()+'점';
+    prepareOnlineRanking(score);
     setTimeout(function(){
       renderHighscores(list,score);
       show('screen-gameover');
+      loadOnlineRankings();
     },500);
   }
 }
